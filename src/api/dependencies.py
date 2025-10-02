@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException
 from src.domain.llm_service_interface import LLMServiceInterface
 from src.domain.llm_service_factory import LLMServiceFactory
+from src.infrastructure.tool_executor import ToolExecutor
 from src.models.data_contracts import LLMProvider
 
 
@@ -97,3 +98,13 @@ class LLMServiceProvider:
 
 # Instance globale du fournisseur
 llm_provider = LLMServiceProvider()
+
+
+def get_tool_executor() -> ToolExecutor:
+    """
+    Dependency pour obtenir l'exécuteur d'outils
+    
+    Returns:
+        ToolExecutor: Instance de l'exécuteur d'outils
+    """
+    return ToolExecutor()

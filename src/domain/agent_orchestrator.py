@@ -1,8 +1,9 @@
 """Agent Orchestrator - Moteur d'agent gérant la boucle ReAct (Reasoning + Acting)"""
 
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 import asyncio
 import logging
+from datetime import datetime
 from src.domain.llm_service_interface import LLMServiceInterface
 from src.infrastructure.tool_executor import ToolExecutor
 from src.models.data_contracts import (
@@ -11,8 +12,12 @@ from src.models.data_contracts import (
     OrchestrationRequest,
     OrchestrationResponse,
     ToolCall,
-    ToolResult
+    ToolResult,
+    Session
 )
+
+if TYPE_CHECKING:
+    from .history_summarizer import HistorySummarizer
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -25,16 +30,23 @@ class AgentOrchestrator:
     Implémente la boucle ReAct (Reasoning + Acting) avec gestion multi-tours.
     """
     
-    def __init__(self, llm_service: LLMServiceInterface, tool_executor: ToolExecutor):
+    def __init__(
+        self, 
+        llm_service: LLMServiceInterface, 
+        tool_executor: ToolExecutor,
+        history_summarizer: Optional['HistorySummarizer'] = None
+    ):
         """
         Initialise l'orchestrateur avec injection de dépendances
         
         Args:
             llm_service: Service LLM injecté (interface)
             tool_executor: Exécuteur d'outils injecté
+            history_summarizer: Service de synthèse d'historique (optionnel)
         """
         self.llm_service = llm_service
         self.tool_executor = tool_executor
+        self.history_summarizer = history_summarizer
         self.max_iterations = 3  # Limite pour éviter les boucles infinies
     
     async def run_orchestration(
@@ -71,8 +83,11 @@ class AgentOrchestrator:
         
         # Validation préliminaire
         try:
-            if not config or not history:
-                raise ValueError("Configuration et historique requis pour l'orchestration")
+            if not config:
+                raise ValueError("Configuration requise pour l'orchestration")
+            # L'historique peut être vide pour une nouvelle session
+            if history is None:
+                raise ValueError("Historique requis (peut être vide) pour l'orchestration")
         except Exception as e:
             logger.error(f"❌ Erreur validation préliminaire: {str(e)}")
             return self._create_error_response(
@@ -178,7 +193,7 @@ class AgentOrchestrator:
             content=f"[ERREUR ORCHESTRATION - {error_code}] {error_message}",
             tool_calls=[],
             provider=self.llm_service.get_provider_name(),
-            model=config.model if config else "unknown",
+            model=config.model_version if config else "unknown",
             usage={"error": True, "error_code": error_code},
             requires_tool_execution=False
         )
@@ -374,3 +389,59 @@ class AgentOrchestrator:
             return f"Résultat outil: {tool_result.result}"
         else:
             return f"Erreur outil: {tool_result.error}"
+    
+    async def run_orchestration_with_session(
+        self, 
+        request: OrchestrationRequest, 
+        session: Session
+    ) -> OrchestrationResponse:
+        """
+        Version avec session : orchestre la boucle ReAct avec synthèse automatique d'historique
+        
+        Args:
+            request: Requête d'orchestration
+            session: Session avec historique persistant
+            
+        Returns:
+            Réponse finale d'orchestration avec session mise à jour
+            
+        Flow:
+            1. Synthèse de l'historique si seuils dépassés
+            2. Orchestration standard avec historique synthétisé
+            3. Ajout du message utilisateur et de la réponse à la session
+        """
+        logger.info(f"🔄 Orchestration avec session {session.session_id}")
+        
+        # Synthèse automatique de l'historique si nécessaire
+        if self.history_summarizer:
+            await self.history_summarizer.summarize_if_needed(session)
+        
+        # Utilisation de la config d'agent fournie ou création d'une config par défaut
+        if request.agent_config:
+            config = request.agent_config
+        else:
+            # Configuration par défaut si aucune fournie
+            config = AgentConfig()
+        
+        response = await self.run_orchestration(config, session.history)
+        
+        # Ajout des messages à la session
+        user_message = ChatMessage(
+            role="user",
+            content=request.message
+        )
+        session.history.append(user_message)
+        
+        assistant_message = ChatMessage(
+            role="assistant", 
+            content=response.content
+        )
+        session.history.append(assistant_message)
+        
+        # Mise à jour des métriques de session
+        session.last_message_at = datetime.now()
+        metrics = session.get_history_metrics()
+        
+        logger.info(f"✅ Session {session.session_id} mise à jour: {metrics['messages']} messages")
+        
+        return response

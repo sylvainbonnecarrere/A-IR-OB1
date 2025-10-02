@@ -5,6 +5,10 @@ import unicodedata
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum
+from uuid import UUID, uuid4
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
 
 
 # ============================================================================
@@ -321,10 +325,279 @@ class OrchestrationRequest(BaseModel):
 
 
 class OrchestrationResponse(BaseModel):
-    """Réponse d'orchestration avec support des outils"""
+    """Réponse d'orchestration avec support des outils et suivi de session"""
     content: Optional[str] = Field(default=None, description="Réponse textuelle de l'IA")
     tool_calls: List[ToolCall] = Field(default_factory=list, description="Appels d'outils demandés par l'IA")
     provider: str = Field(..., description="Fournisseur LLM utilisé")
     model: str = Field(..., description="Modèle LLM utilisé")
     usage: Optional[Dict[str, Any]] = Field(default=None, description="Informations d'utilisation")
     requires_tool_execution: bool = Field(default=False, description="Indique si des outils doivent être exécutés")
+    
+    # Jalon 3.5 - Suivi de session
+    session_id: Optional[UUID] = Field(default=None, description="ID de la session associée")
+    status: Optional[str] = Field(default=None, description="Statut de la session")
+
+
+# ============================================================================
+# JALON 3.4 - ORCHESTRATION MULTI-AGENTS
+# ============================================================================
+
+class AgentDefinition(BaseModel):
+    """
+    Définition d'un agent spécialisé pour l'orchestration multi-agents
+    
+    Cette classe encapsule la configuration complète d'un agent spécialisé,
+    incluant sa mission, sa description pour le routeur, et sa configuration LLM.
+    """
+    agent_name: str = Field(..., description="Nom unique de l'agent (ex: 'Data_Analyst_Agent')")
+    description: str = Field(..., description="Description détaillée de la mission de l'agent pour le routeur LLM")
+    default_config: AgentConfig = Field(..., description="Configuration LLM par défaut de cet agent")
+    
+    @field_validator('agent_name')
+    @classmethod
+    def validate_agent_name(cls, v: str) -> str:
+        """Validation du nom d'agent (format identifier)"""
+        cleaned = validate_safe_string(v, "agent_name")
+        
+        # Validation format identifier (lettres, chiffres, underscore)
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', cleaned):
+            raise ValueError(f"Nom d'agent invalide: {cleaned}. Format requis: identificateur valide (commence par lettre, puis lettres/chiffres/underscore)")
+        
+        return cleaned
+    
+    @field_validator('description')
+    @classmethod
+    def validate_description(cls, v: str) -> str:
+        """Validation et normalisation de la description d'agent"""
+        return validate_safe_string(v, "agent_description")
+    
+    @model_validator(mode='after')
+    def validate_agent_consistency(self) -> 'AgentDefinition':
+        """Validation de la cohérence entre nom d'agent et configuration"""
+        # Vérifier que la configuration a un system_prompt si l'agent est spécialisé
+        if not self.default_config.system_prompt and self.agent_name != "Default_Agent":
+            # Génération automatique d'un system_prompt basique si manquant
+            self.default_config.system_prompt = f"Tu es {self.agent_name}. {self.description}"
+        
+        return self
+
+
+# ============================================================================
+# JALON 3.5 - PERSISTANCE ET MÉMOIRE À LONG TERME
+# ============================================================================
+
+class HistoryConfig(BaseModel):
+    """
+    Configuration pour la gestion de la mémoire à long terme et la synthèse d'historique
+    
+    Cette classe définit les seuils et paramètres pour déclencher la synthèse automatique
+    de l'historique de conversation afin de maintenir des performances optimales.
+    """
+    enabled: bool = Field(default=True, description="Active ou désactive la synthèse automatique")
+    
+    # Seuils de déclenchement
+    message_threshold: int = Field(default=10, description="Nombre max de messages avant synthèse")
+    token_threshold: int = Field(default=8000, description="Nombre max de tokens approximatifs avant synthèse")
+    word_threshold: int = Field(default=2000, description="Nombre max de mots avant synthèse")
+    char_threshold: int = Field(default=15000, description="Nombre max de caractères avant synthèse")
+    
+    # Configuration du LLM de synthèse
+    llm_provider: LLMProvider = Field(default=LLMProvider.OPENAI, description="Fournisseur LLM pour la synthèse")
+    model_version: str = Field(default="gpt-3.5-turbo", description="Modèle rapide pour la synthèse")
+    system_prompt: str = Field(
+        default="""Tu es un assistant spécialisé dans la synthèse d'historiques de conversation.
+
+Ta mission : créer un résumé concis et informatif qui préserve :
+1. Le contexte principal de la conversation
+2. Les informations clés échangées
+3. L'état actuel de la discussion
+4. Les décisions ou conclusions importantes
+
+Format de sortie :
+- Résumé en 2-3 paragraphes maximum
+- Style narratif fluide
+- Préservation du contexte pour la suite de la conversation
+- Focus sur les éléments utiles pour les prochains échanges
+
+Évite les détails superflus et concentre-toi sur l'essentiel.""",
+        description="Prompt système pour le LLM de synthèse"
+    )
+    
+    @field_validator('message_threshold', 'token_threshold', 'word_threshold', 'char_threshold')
+    @classmethod
+    def validate_positive_thresholds(cls, v: int) -> int:
+        """Validation que les seuils sont positifs"""
+        if v <= 0:
+            raise ValueError("Les seuils doivent être des nombres positifs")
+        return v
+
+
+class Session(BaseModel):
+    """
+    Modèle pour une session de conversation persistante avec mémoire à long terme
+    
+    Une session encapsule une conversation complète avec un agent spécialisé,
+    incluant l'historique, la configuration de synthèse et l'état d'exécution.
+    """
+    session_id: UUID = Field(default_factory=uuid4, description="Identifiant unique de la session")
+    agent_name: str = Field(..., description="Nom de l'agent assigné à cette session")
+    history: List[ChatMessage] = Field(default_factory=list, description="Historique complet de la conversation")
+    status: str = Field(default="ACTIVE", description="Statut de la session (ACTIVE, PROCESSING, COMPLETED, ERROR)")
+    history_config: HistoryConfig = Field(default_factory=HistoryConfig, description="Configuration de la mémoire à long terme")
+    created_at: datetime = Field(default_factory=datetime.now, description="Timestamp de création")
+    last_message_at: datetime = Field(default_factory=datetime.now, description="Timestamp du dernier message")
+    
+    @field_validator('agent_name')
+    @classmethod
+    def validate_agent_name(cls, v: str) -> str:
+        """Validation du nom d'agent"""
+        return validate_safe_string(v, "session_agent_name")
+    
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        """Validation du statut de session"""
+        allowed_statuses = {'ACTIVE', 'PROCESSING', 'COMPLETED', 'ERROR', 'PAUSED'}
+        if v not in allowed_statuses:
+            raise ValueError(f"Statut invalide: {v}. Statuts autorisés: {allowed_statuses}")
+        return v
+    
+    def get_history_metrics(self) -> Dict[str, int]:
+        """
+        Calcule les métriques de l'historique pour les seuils de synthèse
+        
+        Returns:
+            Dict contenant messages, chars, words, estimated_tokens
+        """
+        if not self.history:
+            return {"messages": 0, "chars": 0, "words": 0, "estimated_tokens": 0}
+        
+        total_chars = 0
+        total_words = 0
+        
+        for message in self.history:
+            content = message.content or ""
+            total_chars += len(content)
+            # Approximation simple du comptage de mots
+            words = len(content.split())
+            total_words += words
+        
+        # Estimation approximative des tokens (1 token ≈ 4 caractères en moyenne)
+        estimated_tokens = total_chars // 4
+        
+        return {
+            "messages": len(self.history),
+            "chars": total_chars,
+            "words": total_words,
+            "estimated_tokens": estimated_tokens
+        }
+    
+    def should_trigger_summarization(self) -> bool:
+        """
+        Vérifie si la synthèse doit être déclenchée selon les seuils configurés
+        
+        Returns:
+            bool: True si au moins un seuil est dépassé
+        """
+        if not self.history_config.enabled:
+            return False
+        
+        metrics = self.get_history_metrics()
+        
+        return (
+            metrics["messages"] >= self.history_config.message_threshold or
+            metrics["chars"] >= self.history_config.char_threshold or
+            metrics["words"] >= self.history_config.word_threshold or
+            metrics["estimated_tokens"] >= self.history_config.token_threshold
+        )
+
+
+class SessionManager(ABC):
+    """
+    Interface abstraite pour la gestion des sessions persistantes
+    
+    Cette interface définit le contrat pour les implémentations de stockage
+    de sessions (en mémoire, base de données, cache Redis, etc.)
+    """
+    
+    @abstractmethod
+    async def get_session(self, session_id: str) -> Optional[Session]:
+        """
+        Récupère une session par son ID
+        
+        Args:
+            session_id: Identifiant unique de la session (string)
+            
+        Returns:
+            Session si trouvée, None sinon
+        """
+        pass
+    
+    @abstractmethod
+    async def save_session(self, session: Session) -> None:
+        """
+        Sauvegarde ou met à jour une session
+        
+        Args:
+            session: Session à sauvegarder
+        """
+        pass
+    
+    @abstractmethod
+    async def create_new_session(
+        self, 
+        agent_name: str, 
+        history_config: Optional[HistoryConfig] = None
+    ) -> Session:
+        """
+        Crée une nouvelle session
+        
+        Args:
+            agent_name: Nom de l'agent assigné
+            history_config: Configuration optionnelle de l'historique
+            
+        Returns:
+            Nouvelle session créée
+        """
+        pass
+    
+    @abstractmethod
+    async def list_sessions(self, limit: int = 100) -> List[Session]:
+        """
+        Liste les sessions existantes
+        
+        Args:
+            limit: Nombre maximum de sessions à retourner
+            
+        Returns:
+            Liste des sessions
+        """
+        pass
+
+
+# === Modèles de requête/réponse pour les endpoints de session (Jalon 3.5) ===
+
+@dataclass
+class SessionCreateRequest:
+    """Requête de création de session"""
+    agent_name: str
+    history_config: Optional[HistoryConfig] = None
+    
+    def __post_init__(self):
+        self.agent_name = validate_user_input_security(self.agent_name, "agent_name")
+
+
+@dataclass 
+class SessionResponse:
+    """Réponse avec informations de session"""
+    session_id: str
+    agent_name: str
+    total_messages: int
+    created_at: datetime
+    last_message_at: datetime
+    status: str
+    
+    # Métriques optionnelles
+    total_characters: Optional[int] = None
+    total_words: Optional[int] = None
+    estimated_tokens: Optional[int] = None
