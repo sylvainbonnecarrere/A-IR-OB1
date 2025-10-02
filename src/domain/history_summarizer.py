@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from src.domain.llm_service_interface import LLMServiceInterface
 from src.domain.llm_service_factory import LLMServiceFactory
+from src.domain.tracer import Tracer  # JALON 4.1-B: Intégration du traçage
 from src.models.data_contracts import (
     Session,
     HistoryConfig,
@@ -42,7 +43,7 @@ class HistorySummarizer:
         """
         self.session_manager = session_manager
     
-    async def summarize_if_needed(self, session: Session) -> Session:
+    async def summarize_if_needed(self, session: Session, tracer: Optional[Tracer] = None) -> Session:
         """
         Vérifie et effectue la synthèse de l'historique si nécessaire
         
@@ -73,9 +74,21 @@ class HistorySummarizer:
         logger.info(f"Déclenchement synthèse pour session {session.session_id}")
         logger.info(f"Métriques: {metrics}")
         
+        # JALON 4.1-B: Traçage du début de synthèse
+        if tracer:
+            await tracer.log_step(
+                component="HistorySummarizer",
+                event="summarization_start",
+                details={
+                    "session_id": session.session_id,
+                    "messages_count": metrics['messages'],
+                    "tokens_count": metrics['tokens']
+                }
+            )
+        
         try:
             # Synthèse de l'historique
-            summary_message = await self._create_summary(session)
+            summary_message = await self._create_summary(session, tracer)
             
             # Préservation du dernier message utilisateur
             last_user_message = self._get_last_user_message(session.history)
@@ -94,14 +107,35 @@ class HistorySummarizer:
             logger.info(f"Synthèse réussie pour session {session.session_id}")
             logger.info(f"Historique réduit de {metrics['messages']} à {len(new_history)} messages")
             
+            # JALON 4.1-B: Traçage de la synthèse réussie
+            if tracer:
+                await tracer.log_step(
+                    component="HistorySummarizer",
+                    event="summarization_success",
+                    details={
+                        "session_id": session.session_id,
+                        "original_messages": metrics['messages'],
+                        "new_messages": len(new_history),
+                        "summary_length": len(summary_message.content)
+                    }
+                )
+            
             return session
             
         except Exception as e:
             logger.error(f"Erreur lors de la synthèse pour session {session.session_id}: {str(e)}")
+            
+            # JALON 4.1-B: Traçage des erreurs de synthèse
+            if tracer:
+                await tracer.log_error(
+                    error_type="SUMMARIZATION_ERROR",
+                    error_message=str(e)
+                )
+            
             # En cas d'erreur, on retourne la session inchangée
             return session
     
-    async def _create_summary(self, session: Session) -> ChatMessage:
+    async def _create_summary(self, session: Session, tracer: Optional[Tracer] = None) -> ChatMessage:
         """
         Génère le résumé de l'historique via un LLM de synthèse
         

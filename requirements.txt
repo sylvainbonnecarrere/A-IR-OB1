@@ -21,6 +21,9 @@ anthropic>=0.28.0
 # Jalon 3.2 - Multi-Fournisseurs Avancés
 mistralai>=1.0.0
 
+# Jalon 4.3 - Métriques et Observabilité de Production
+prometheus_client>=0.20.0
+
 # Dépendances additionnelles pour les prochains jalons :
 # - httpx (client HTTP asynchrone pour les APIs LLM)
 # - python-multipart (support upload de fichiers)

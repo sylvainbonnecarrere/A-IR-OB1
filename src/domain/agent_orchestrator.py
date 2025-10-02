@@ -5,6 +5,8 @@ import asyncio
 import logging
 from datetime import datetime
 from src.domain.llm_service_interface import LLMServiceInterface
+from src.domain.tracer import Tracer  # JALON 4.1-B: Intégration du traçage
+from src.domain.resilient_llm_service import ResilientLLMService  # JALON 4.2: Service résilient
 from src.infrastructure.tool_executor import ToolExecutor
 from src.models.data_contracts import (
     AgentConfig, 
@@ -13,7 +15,8 @@ from src.models.data_contracts import (
     OrchestrationResponse,
     ToolCall,
     ToolResult,
-    Session
+    Session,
+    AgentExecutionError  # JALON 4.2: Exception de résilience
 )
 
 if TYPE_CHECKING:
@@ -47,12 +50,29 @@ class AgentOrchestrator:
         self.llm_service = llm_service
         self.tool_executor = tool_executor
         self.history_summarizer = history_summarizer
+        
+        # JALON 4.2: Service résilient pour les appels LLM
+        self.resilient_service: Optional[ResilientLLMService] = None
+        
+        # Configuration pour la limitation des boucles
+        self.max_iterations = 3
+    
+    def _initialize_resilient_service(self, tracer: Optional[Tracer] = None) -> None:
+        """
+        Initialise le service résilient si nécessaire (JALON 4.2)
+        
+        Args:
+            tracer: Instance de tracer pour l'observabilité
+        """
+        if self.resilient_service is None:
+            self.resilient_service = ResilientLLMService(tracer=tracer)
         self.max_iterations = 3  # Limite pour éviter les boucles infinies
     
     async def run_orchestration(
         self, 
         config: AgentConfig, 
-        history: List[ChatMessage]
+        history: List[ChatMessage],
+        tracer: Optional[Tracer] = None
     ) -> OrchestrationResponse:
         """
         Méthode principale d'orchestration gérant la boucle ReAct avec durcissement sécuritaire
@@ -60,6 +80,7 @@ class AgentOrchestrator:
         Args:
             config: Configuration de l'agent
             history: Historique de conversation
+            tracer: Tracer optionnel pour l'observabilité (JALON 4.1-B)
             
         Returns:
             Réponse finale d'orchestration
@@ -75,6 +96,13 @@ class AgentOrchestrator:
             - Isolation des erreurs d'outils
         """
         logger.info(f"🚀 Début orchestration avec {len(history)} messages d'historique")
+        
+        # JALON 4.1-B: Traçage du début de l'orchestration principale
+        if tracer:
+            await tracer.log_orchestration_start(
+                agent_name=config.agent_name,
+                iteration=1
+            )
         
         current_history = history.copy()
         iteration = 0
@@ -102,7 +130,16 @@ class AgentOrchestrator:
             
             try:
                 # === PHASE 1: REASONING - Appel LLM ===
-                llm_response = await self._call_llm_with_config_safe(config, current_history)
+                # JALON 4.1-B: Traçage de l'appel LLM
+                if tracer:
+                    await tracer.log_llm_call(
+                        provider=self.llm_service.get_provider_name(),
+                        model=config.model_version if hasattr(config, 'model_version') else "unknown",
+                        prompt_length=sum(len(msg.content) for msg in current_history)
+                    )
+                
+                # JALON 4.2: Appel LLM résilient avec retry/backoff
+                llm_response = await self._call_llm_with_config_safe(config, current_history, tracer)
                 
                 if llm_response is None:
                     logger.error("❌ Réponse LLM nulle - Arrêt d'urgence")
@@ -119,6 +156,14 @@ class AgentOrchestrator:
                 if not llm_response.requires_tool_execution or not llm_response.tool_calls:
                     # Réponse finale en texte - Fin de la boucle ReAct
                     logger.info("✅ Réponse finale obtenue - Fin de l'orchestration")
+                    
+                    # JALON 4.1-B: Traçage de la réponse finale
+                    if tracer:
+                        await tracer.log_final_response(
+                            response_length=len(llm_response.content),
+                            total_steps=iteration
+                        )
+                    
                     return llm_response
                 
                 # Protection contre l'abus d'outils
@@ -133,6 +178,14 @@ class AgentOrchestrator:
                 
                 # === PHASE 3: ACTING - Exécution des outils ===
                 logger.info(f"🔧 Exécution de {len(llm_response.tool_calls)} outil(s)")
+                
+                # JALON 4.1-B: Traçage de l'exécution d'outils
+                if tracer:
+                    for tool_call in llm_response.tool_calls:
+                        await tracer.log_tool_execution(
+                            tool_name=tool_call.function.name,
+                            tool_arguments=tool_call.function.arguments
+                        )
                 
                 tool_results = await self._execute_tool_calls_safe(llm_response.tool_calls)
                 
@@ -155,6 +208,14 @@ class AgentOrchestrator:
                 
             except Exception as e:
                 logger.error(f"❌ Erreur critique durant l'itération {iteration}: {str(e)}")
+                
+                # JALON 4.1-B: Traçage des erreurs
+                if tracer:
+                    await tracer.log_error(
+                        error_type="ITERATION_CRITICAL_ERROR",
+                        error_message=str(e)
+                    )
+                
                 return self._create_error_response(
                     f"Erreur critique itération {iteration}: {str(e)}", 
                     config, 
@@ -201,22 +262,57 @@ class AgentOrchestrator:
     async def _call_llm_with_config_safe(
         self, 
         config: AgentConfig, 
-        history: List[ChatMessage]
+        history: List[ChatMessage],
+        tracer: Optional[Tracer] = None
     ) -> Optional[OrchestrationResponse]:
         """
-        Version sécurisée de l'appel LLM avec gestion robuste des erreurs
+        Version sécurisée de l'appel LLM avec résilience et gestion robuste des erreurs (JALON 4.2)
         
         Args:
             config: Configuration de l'agent
             history: Historique de conversation
+            tracer: Tracer pour l'observabilité
             
         Returns:
             Réponse du LLM ou None en cas d'erreur critique
         """
         try:
-            return await self._call_llm_with_config(config, history)
+            # JALON 4.2: Utilisation du service résilient
+            self._initialize_resilient_service(tracer)
+            
+            # Construction de la requête d'orchestration
+            request = OrchestrationRequest(
+                message="",  # Le message utilisateur est déjà dans l'historique
+                agent_config=config,
+                conversation_history=history
+            )
+            
+            # Appel résilient avec retry et backoff
+            return await self.resilient_service.resilient_chat_completion(config, request)
+            
+        except AgentExecutionError as e:
+            # JALON 4.2: Gestion sécurisée des erreurs finales de résilience
+            logger.error(f"❌ Échec définitif appel LLM après retry: {str(e)}")
+            
+            # Traçage de l'erreur finale sécurisée
+            if tracer:
+                await tracer.log_error(
+                    error_type="RESILIENT_LLM_FAILURE",
+                    error_message=f"Échec définitif après {e.attempts} tentatives: {e.message}"
+                )
+            
+            return None
+            
         except Exception as e:
-            logger.error(f"❌ Erreur critique appel LLM: {str(e)}")
+            # Autres erreurs non prévues
+            logger.error(f"❌ Erreur critique inattendue appel LLM: {str(e)}")
+            
+            if tracer:
+                await tracer.log_error(
+                    error_type="UNEXPECTED_LLM_ERROR",
+                    error_message=f"Erreur inattendue: {type(e).__name__}"
+                )
+            
             return None
     
     async def _execute_tool_calls_safe(self, tool_calls: List[ToolCall]) -> Optional[List[ToolResult]]:
@@ -255,37 +351,6 @@ class AgentOrchestrator:
         except Exception as e:
             logger.error(f"❌ Erreur critique exécution outils: {str(e)}")
             return None
-    
-    async def _call_llm_with_config(
-        self, 
-        config: AgentConfig, 
-        history: List[ChatMessage]
-    ) -> OrchestrationResponse:
-        """
-        Appelle le LLM avec la configuration et l'historique fournis
-        
-        Args:
-            config: Configuration de l'agent
-            history: Historique de conversation
-            
-        Returns:
-            Réponse du LLM avec éventuels tool calls
-        """
-        # Pour l'adaptateur OpenAI, nous utilisons la méthode orchestration_completion
-        if hasattr(self.llm_service, 'orchestration_completion'):
-            # Construction de la requête d'orchestration
-            request = OrchestrationRequest(
-                message="",  # Le message utilisateur est déjà dans l'historique
-                agent_config=config,
-                conversation_history=history
-            )
-            return await self.llm_service.orchestration_completion(request)
-        else:
-            # Fallback pour d'autres adaptateurs
-            raise NotImplementedError(
-                f"L'adaptateur {self.llm_service.get_provider_name()} "
-                f"ne supporte pas encore l'orchestration avec outils"
-            )
     
     async def _execute_tool_calls(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
         """
@@ -390,10 +455,45 @@ class AgentOrchestrator:
         else:
             return f"Erreur outil: {tool_result.error}"
     
+    def _create_error_response(
+        self, 
+        error_message: str, 
+        config: AgentConfig, 
+        error_code: str = "GENERAL_ERROR"
+    ) -> OrchestrationResponse:
+        """
+        Crée une réponse d'erreur sécurisée pour l'utilisateur (JALON 4.2)
+        
+        Args:
+            error_message: Message d'erreur sécurisé
+            config: Configuration d'agent
+            error_code: Code d'erreur technique
+            
+        Returns:
+            Réponse d'orchestration avec message d'erreur
+        """
+        safe_message = (
+            f"❌ Je rencontre actuellement des difficultés techniques. "
+            f"{error_message}. Veuillez réessayer dans quelques instants."
+        )
+        
+        return OrchestrationResponse(
+            content=safe_message,
+            tool_calls=[],
+            requires_tool_execution=False,
+            agent_name=config.agent_name if hasattr(config, 'agent_name') else "assistant",
+            processing_info={
+                "error_code": error_code,
+                "status": "error",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+    
     async def run_orchestration_with_session(
         self, 
         request: OrchestrationRequest, 
-        session: Session
+        session: Session,
+        tracer: Optional[Tracer] = None  # JALON 4.1-B: Traçage optionnel
     ) -> OrchestrationResponse:
         """
         Version avec session : orchestre la boucle ReAct avec synthèse automatique d'historique
@@ -401,6 +501,7 @@ class AgentOrchestrator:
         Args:
             request: Requête d'orchestration
             session: Session avec historique persistant
+            tracer: Tracer optionnel pour l'observabilité (JALON 4.1-B)
             
         Returns:
             Réponse finale d'orchestration avec session mise à jour
@@ -412,9 +513,16 @@ class AgentOrchestrator:
         """
         logger.info(f"🔄 Orchestration avec session {session.session_id}")
         
+        # JALON 4.1-B: Traçage du début de l'orchestration
+        if tracer:
+            await tracer.log_orchestration_start(
+                agent_name=session.agent_name,
+                iteration=1
+            )
+        
         # Synthèse automatique de l'historique si nécessaire
         if self.history_summarizer:
-            await self.history_summarizer.summarize_if_needed(session)
+            await self.history_summarizer.summarize_if_needed(session, tracer)
         
         # Utilisation de la config d'agent fournie ou création d'une config par défaut
         if request.agent_config:
@@ -423,7 +531,7 @@ class AgentOrchestrator:
             # Configuration par défaut si aucune fournie
             config = AgentConfig()
         
-        response = await self.run_orchestration(config, session.history)
+        response = await self.run_orchestration(config, session.history, tracer)
         
         # Ajout des messages à la session
         user_message = ChatMessage(
@@ -441,6 +549,13 @@ class AgentOrchestrator:
         # Mise à jour des métriques de session
         session.last_message_at = datetime.now()
         metrics = session.get_history_metrics()
+        
+        # JALON 4.1-B: Traçage de la réponse finale
+        if tracer:
+            await tracer.log_final_response(
+                response_length=len(response.content),
+                total_steps=len(session.trace) if session.trace else 0
+            )
         
         logger.info(f"✅ Session {session.session_id} mise à jour: {metrics['messages']} messages")
         

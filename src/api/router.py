@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Response
 from src.api.dependencies import (
     get_default_llm_service, 
     get_llm_service_from_config,
@@ -17,6 +17,7 @@ from src.domain.agent_router import AgentRouter
 from src.domain.history_summarizer import HistorySummarizer
 from src.infrastructure.tool_executor import ToolExecutor
 from src.infrastructure.session_manager import InMemorySessionManager
+from src.infrastructure.monitoring import get_metrics_collector  # JALON 4.3: Métriques Prometheus
 from src.models.data_contracts import (
     HealthResponse,
     ServiceTestRequest,
@@ -67,6 +68,52 @@ async def health_check():
         version="1.0.0",
         timestamp=datetime.now().isoformat()
     )
+
+
+@router.get("/metrics", summary="Prometheus Metrics")
+async def get_metrics():
+    """
+    Endpoint d'exposition des métriques Prometheus (JALON 4.3)
+    
+    Expose les métriques de monitoring au format OpenMetrics/Prometheus
+    pour l'intégration avec des outils de monitoring comme Grafana.
+    
+    Métriques exposées:
+    - llm_call_count_total: Compteur des appels LLM
+    - llm_latency_seconds: Latence des appels LLM  
+    - orchestrator_errors_count_total: Compteur d'erreurs
+    - tool_execution_count_total: Compteur d'exécutions d'outils
+    - session_count_total: Compteur de sessions
+    - active_sessions_current: Sessions actives actuelles
+    
+    Returns:
+        Métriques au format OpenMetrics (text/plain)
+    """
+    try:
+        metrics_collector = get_metrics_collector()
+        metrics_content = metrics_collector.get_metrics()
+        
+        return Response(
+            content=metrics_content,
+            media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+        
+    except Exception as e:
+        # En cas d'erreur, retourner des métriques basiques
+        basic_metrics = f"""# HELP application_info Application information
+# TYPE application_info info
+application_info{{version="1.0.0",name="A-IR-OB1"}} 1
+
+# HELP metrics_error_total Number of metrics collection errors
+# TYPE metrics_error_total counter
+metrics_error_total 1
+
+# Error details: {str(e)[:100]}
+"""
+        return Response(
+            content=basic_metrics,
+            media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
 
 
 @router.post("/test-service", response_model=ServiceTestResponse, summary="Test LLM Service")
@@ -489,7 +536,8 @@ async def get_session(session_id: str) -> SessionResponse:
             status="active",
             total_characters=metrics["chars"],
             total_words=metrics["words"],
-            estimated_tokens=metrics["estimated_tokens"]
+            estimated_tokens=metrics["estimated_tokens"],
+            trace=session.trace  # JALON 4.1-B: Exposition de la trace
         )
         
     except ValueError:
@@ -551,10 +599,15 @@ async def orchestrate_with_session(
             history_summarizer=history_summarizer
         )
         
-        # Orchestration avec session
+        # JALON 4.1-B: Création du tracer pour l'observabilité
+        from src.domain.tracer import Tracer
+        tracer = Tracer(session_manager)
+        
+        # Orchestration avec session et traçage
         response = await orchestrator.run_orchestration_with_session(
             request=request,
-            session=session
+            session=session,
+            tracer=tracer
         )
         
         # Sauvegarde asynchrone de la session mise à jour

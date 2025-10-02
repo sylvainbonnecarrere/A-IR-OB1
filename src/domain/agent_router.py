@@ -8,8 +8,9 @@ et sélectionner l'agent spécialisé le plus approprié.
 
 import json
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from src.domain.llm_service_interface import LLMServiceInterface
+from src.domain.tracer import Tracer  # JALON 4.1-B: Intégration du traçage
 from src.models.data_contracts import (
     ChatMessage, 
     AgentDefinition,
@@ -110,7 +111,8 @@ Si la requête est ambiguë, choisis l'agent le plus généraliste ou demande de
     async def dispatch(
         self, 
         user_message: ChatMessage, 
-        available_agents: List[AgentDefinition]
+        available_agents: List[AgentDefinition],
+        tracer: Optional[Tracer] = None  # JALON 4.1-B: Traçage optionnel
     ) -> AgentDefinition:
         """
         Sélectionne l'agent approprié pour traiter la requête utilisateur
@@ -118,6 +120,7 @@ Si la requête est ambiguë, choisis l'agent le plus généraliste ou demande de
         Args:
             user_message: Message de l'utilisateur à analyser
             available_agents: Liste des agents disponibles pour la sélection
+            tracer: Tracer optionnel pour l'observabilité (JALON 4.1-B)
             
         Returns:
             AgentDefinition: L'agent sélectionné pour traiter la requête
@@ -128,10 +131,22 @@ Si la requête est ambiguë, choisis l'agent le plus généraliste ou demande de
         if not available_agents:
             raise ValueError("Aucun agent disponible pour le routage")
         
+        # JALON 4.1-B: Traçage du début du routage
+        if tracer:
+            await tracer.log_router_start(
+                request_summary=user_message.content[:100] + ("..." if len(user_message.content) > 100 else "")
+            )
+        
         # Si un seul agent, pas besoin de routage
         if len(available_agents) == 1:
-            logger.info(f"Un seul agent disponible, sélection automatique: {available_agents[0].agent_name}")
-            return available_agents[0]
+            selected_agent = available_agents[0]
+            logger.info(f"Un seul agent disponible, sélection automatique: {selected_agent.agent_name}")
+            
+            # JALON 4.1-B: Traçage de la décision automatique
+            if tracer:
+                await tracer.log_router_decision(selected_agent.agent_name, confidence=1.0)
+            
+            return selected_agent
         
         logger.info(f"Routage en cours pour: '{user_message.content}' parmi {len(available_agents)} agents")
         
@@ -161,14 +176,29 @@ Si la requête est ambiguë, choisis l'agent le plus généraliste ou demande de
             # Parser la réponse et extraire l'agent sélectionné
             selected_agent = self._extract_selected_agent(response, available_agents)
             
+            # JALON 4.1-B: Traçage de la décision finale
+            if tracer:
+                await tracer.log_router_decision(selected_agent.agent_name)
+            
             logger.info(f"Agent sélectionné: {selected_agent.agent_name}")
             return selected_agent
             
         except Exception as e:
             logger.error(f"Erreur lors du routage: {str(e)}")
+            
+            # JALON 4.1-B: Traçage de l'erreur
+            if tracer:
+                await tracer.log_error("AgentRouter", "routing_error", str(e))
+            
             # Fallback : retourner le premier agent disponible
-            logger.warning(f"Fallback vers le premier agent: {available_agents[0].agent_name}")
-            return available_agents[0]
+            fallback_agent = available_agents[0]
+            logger.warning(f"Fallback vers le premier agent: {fallback_agent.agent_name}")
+            
+            # JALON 4.1-B: Traçage du fallback
+            if tracer:
+                await tracer.log_router_decision(fallback_agent.agent_name, confidence=0.0)
+            
+            return fallback_agent
 
     async def _call_router_llm_with_tools(
         self, 

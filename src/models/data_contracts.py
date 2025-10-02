@@ -266,6 +266,43 @@ class GetCurrentTimeTool(ToolDefinition):
         }
 
 
+class RetryConfig(BaseModel):
+    """
+    Configuration de résilience pour les appels LLM (JALON 4.2)
+    
+    Définit les paramètres de retry avec backoff exponentiel pour gérer
+    les erreurs temporaires des APIs LLM de façon robuste.
+    """
+    max_attempts: int = Field(
+        default=3, 
+        ge=1, 
+        le=10,
+        description="Nombre maximum de tentatives (1-10)"
+    )
+    delay_base: float = Field(
+        default=1.0, 
+        ge=0.1, 
+        le=60.0,
+        description="Délai initial en secondes pour le backoff exponentiel (0.1-60s)"
+    )
+    
+    @field_validator('max_attempts')
+    @classmethod
+    def validate_max_attempts(cls, v: int) -> int:
+        """Validation du nombre maximum de tentatives"""
+        if v < 1 or v > 10:
+            raise ValueError("max_attempts doit être entre 1 et 10")
+        return v
+    
+    @field_validator('delay_base')
+    @classmethod
+    def validate_delay_base(cls, v: float) -> float:
+        """Validation du délai de base"""
+        if v < 0.1 or v > 60.0:
+            raise ValueError("delay_base doit être entre 0.1 et 60.0 secondes")
+        return v
+
+
 class AgentConfig(BaseModel):
     """Configuration pour un agent IA avec outils et validation sécurisée"""
     provider: LLMProvider = Field(default=LLMProvider.OPENAI, description="Fournisseur LLM")
@@ -275,6 +312,12 @@ class AgentConfig(BaseModel):
     tools_enabled: bool = Field(default=False, description="Activer les outils")
     available_tools: List[str] = Field(default_factory=list, description="Liste des outils disponibles")
     system_prompt: Optional[str] = Field(default=None, description="Prompt système personnalisé")
+    
+    # JALON 4.2: Configuration de résilience
+    retry_config: RetryConfig = Field(
+        default_factory=RetryConfig, 
+        description="Configuration de retry avec backoff pour les appels LLM"
+    )
     
     @field_validator('model_version')
     @classmethod
@@ -383,6 +426,45 @@ class AgentDefinition(BaseModel):
 
 
 # ============================================================================
+# JALON 4.1-B - CONTRATS DE TRAÇABILITÉ (TRACING)
+# ============================================================================
+
+class TraceStep(BaseModel):
+    """
+    Modèle pour une étape unique de traçage dans le cycle d'orchestration
+    
+    Chaque TraceStep représente un événement atomique dans le flux d'exécution,
+    permettant une observabilité complète du système pour le débogage.
+    """
+    timestamp: datetime = Field(default_factory=datetime.now, description="Horodatage précis de l'étape")
+    component: str = Field(..., description="Composant responsable (Router/Orchestrator/LLM/HistorySummarizer)")
+    event: str = Field(..., description="Type d'événement (start/decision/call/response/error)")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Détails spécifiques de l'étape")
+    
+    @field_validator('component')
+    @classmethod
+    def validate_component(cls, v: str) -> str:
+        """Validation du nom de composant"""
+        allowed_components = {
+            'Router', 'Orchestrator', 'LLM', 'HistorySummarizer', 
+            'AgentRouter', 'AgentOrchestrator', 'ToolExecutor', 'SessionManager'
+        }
+        if v not in allowed_components:
+            # Permettre d'autres composants mais normaliser
+            return validate_safe_string(v, "trace_component")
+        return v
+    
+    @field_validator('event')
+    @classmethod
+    def validate_event(cls, v: str) -> str:
+        """Validation du type d'événement"""
+        return validate_safe_string(v, "trace_event")
+
+# Type Alias pour une trace complète (liste d'étapes)
+Trace = List[TraceStep]
+
+
+# ============================================================================
 # JALON 3.5 - PERSISTANCE ET MÉMOIRE À LONG TERME
 # ============================================================================
 
@@ -446,6 +528,9 @@ class Session(BaseModel):
     history_config: HistoryConfig = Field(default_factory=HistoryConfig, description="Configuration de la mémoire à long terme")
     created_at: datetime = Field(default_factory=datetime.now, description="Timestamp de création")
     last_message_at: datetime = Field(default_factory=datetime.now, description="Timestamp du dernier message")
+    
+    # JALON 4.1-B: Traçabilité pour observabilité
+    trace: Trace = Field(default_factory=list, description="Historique complet des étapes d'exécution pour le débogage")
     
     @field_validator('agent_name')
     @classmethod
@@ -601,3 +686,27 @@ class SessionResponse:
     total_characters: Optional[int] = None
     total_words: Optional[int] = None
     estimated_tokens: Optional[int] = None
+    
+    # JALON 4.1-B: Trace d'observabilité
+    trace: Optional[Trace] = None
+
+
+# ============================================================================
+# EXCEPTIONS PERSONNALISÉES (JALON 4.2)
+# ============================================================================
+
+class AgentExecutionError(Exception):
+    """
+    Exception levée lors d'échecs définitifs d'exécution d'agent (JALON 4.2)
+    
+    Cette exception encapsule les erreurs finales après épuisement des 
+    tentatives de retry, tout en préservant la sécurité (pas de fuite d'infos).
+    """
+    def __init__(self, message: str, original_error: Optional[Exception] = None, attempts: int = 1):
+        self.message = message
+        self.original_error = original_error
+        self.attempts = attempts
+        super().__init__(self.message)
+        
+    def __str__(self) -> str:
+        return f"Agent execution failed after {self.attempts} attempts: {self.message}"
