@@ -1,4 +1,4 @@
-"""Adaptateur OpenAI - Implémentation de l'interface LLM pour OpenAI avec Function Calling"""
+"""Adaptateur Qwen - Implémentation de l'interface LLM pour Alibaba Qwen (OpenAI-compatible)"""
 
 import os
 from typing import List, Optional, Dict, Any
@@ -10,19 +10,22 @@ from src.models.data_contracts import (
 )
 
 
-class OpenAIAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API OpenAI"""
+class QwenAdapter(LLMServiceInterface):
+    """Adaptateur pour l'API Qwen via DashScope (compatible OpenAI)"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur OpenAI
+        Initialise l'adaptateur Qwen
         
         Args:
-            api_key: Clé API OpenAI (optionnel, peut être définie via OPENAI_API_KEY)
+            api_key: Clé API Qwen/DashScope (optionnel, peut être définie via QWEN_API_KEY)
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.client = AsyncOpenAI(api_key=self.api_key) if self.api_key else None
-        self.default_model = "gpt-3.5-turbo"
+        self.api_key = api_key or os.getenv("QWEN_API_KEY")
+        self.client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://dashscope.aliyuncs.com/v1"
+        ) if self.api_key else None
+        self.default_model = "qwen-max"
 
     async def chat_completion(
         self,
@@ -32,9 +35,9 @@ class OpenAIAdapter(LLMServiceInterface):
         temperature: Optional[float] = None,
         tools: Optional[List[ToolDefinition]] = None
     ) -> ChatResponse:
-        """Génère une réponse via l'API OpenAI Chat Completion avec support des outils"""
+        """Génère une réponse via l'API Qwen avec support des outils"""
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise Exception("Qwen API key not configured")
 
         # Conversion des messages Pydantic vers le format OpenAI
         openai_messages = [
@@ -54,11 +57,13 @@ class OpenAIAdapter(LLMServiceInterface):
             params["temperature"] = temperature
             
         # Ajout des outils si fournis
+        # Note: Selon la doc, Qwen supporte les fonctions via qwen_agent.llm
+        # Mais pour maintenir la cohérence, on utilise le format OpenAI compatible
         if tools:
             formatted_tools = await self.format_tools_for_llm(tools)
             if formatted_tools:
-                params["tools"] = formatted_tools
-                params["tool_choice"] = "auto"
+                # Format Qwen via API OpenAI compatible
+                params["functions"] = formatted_tools  # Qwen utilise "functions" au lieu de "tools"
 
         try:
             response = await self.client.chat.completions.create(**params)
@@ -74,24 +79,59 @@ class OpenAIAdapter(LLMServiceInterface):
                 } if response.usage else None
             )
         except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+            raise Exception(f"Qwen API error: {str(e)}")
 
     async def format_tools_for_llm(self, tool_definitions: List[ToolDefinition]) -> List[Dict[str, Any]]:
         """
-        Convertit nos ToolDefinition internes vers le format OpenAI
+        Convertit nos ToolDefinition internes vers le format Qwen
+        
+        Selon la doc, Qwen utilise un format "functions" qui est légèrement différent d'OpenAI:
+        [{
+            "name": "get_weather",
+            "description": "Obtient la météo",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                }
+            }
+        }]
         
         Args:
             tool_definitions: Liste des définitions d'outils internes
             
         Returns:
-            Liste des outils au format OpenAI
+            Liste des outils au format Qwen
         """
         formatted_tools = []
         
         for tool in tool_definitions:
             try:
+                # Récupérer le schéma de l'outil
                 tool_schema = tool.get_tool_schema()
-                formatted_tools.append(tool_schema)
+                
+                # Convertir du format OpenAI vers le format Qwen
+                if "function" in tool_schema:
+                    func_info = tool_schema["function"]
+                    qwen_tool = {
+                        "name": func_info.get("name", tool.name),
+                        "description": func_info.get("description", tool.description),
+                        "parameters": func_info.get("parameters", {
+                            "type": "object",
+                            "properties": {}
+                        })
+                    }
+                    formatted_tools.append(qwen_tool)
+                else:
+                    # Fallback si le schéma n'a pas la structure attendue
+                    formatted_tools.append({
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    })
             except Exception as e:
                 # Log l'erreur mais continue avec les autres outils
                 print(f"Erreur lors du formatage de l'outil {tool.name}: {e}")
@@ -113,7 +153,7 @@ class OpenAIAdapter(LLMServiceInterface):
             Réponse d'orchestration avec éventuels appels d'outils
         """
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise Exception("Qwen API key not configured")
 
         # Construire les messages avec l'historique
         messages = list(request.conversation_history)
@@ -140,18 +180,27 @@ class OpenAIAdapter(LLMServiceInterface):
             tools = [GetCurrentTimeTool()]
             formatted_tools = await self.format_tools_for_llm(tools)
             if formatted_tools:
-                params["tools"] = formatted_tools
-                params["tool_choice"] = "auto"
+                params["functions"] = formatted_tools  # Qwen utilise "functions"
 
         try:
             response = await self.client.chat.completions.create(**params)
             message = response.choices[0].message
 
             # Vérifier si l'IA veut appeler des outils
+            # Note: Le format de réponse peut être différent pour Qwen
             tool_calls = []
             requires_tool_execution = False
             
-            if hasattr(message, 'tool_calls') and message.tool_calls:
+            # Qwen pourrait utiliser un format différent pour les function calls
+            if hasattr(message, 'function_call') and message.function_call:
+                requires_tool_execution = True
+                tool_calls.append(ToolCall(
+                    id="qwen_function_call",
+                    tool_name=message.function_call.get('name', 'unknown'),
+                    arguments=eval(message.function_call.get('arguments', '{}')) if message.function_call.get('arguments') else {}
+                ))
+            elif hasattr(message, 'tool_calls') and message.tool_calls:
+                # Au cas où Qwen supporterait aussi le format OpenAI standard
                 requires_tool_execution = True
                 for tool_call in message.tool_calls:
                     tool_calls.append(ToolCall(
@@ -173,7 +222,7 @@ class OpenAIAdapter(LLMServiceInterface):
                 requires_tool_execution=requires_tool_execution
             )
         except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+            raise Exception(f"Qwen API error: {str(e)}")
 
     async def simple_completion(self, prompt: str, **kwargs) -> str:
         """Génère une réponse simple à partir d'un prompt"""
@@ -183,17 +232,21 @@ class OpenAIAdapter(LLMServiceInterface):
 
     def get_provider_name(self) -> str:
         """Retourne le nom du fournisseur"""
-        return "openai"
+        return "qwen"
 
     def get_available_models(self) -> List[str]:
-        """Retourne la liste des modèles OpenAI disponibles"""
+        """Retourne la liste des modèles Qwen disponibles"""
         return [
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "gpt-3.5-turbo-16k"
+            "qwen-max",
+            "qwen-vl-max",
+            "qwen-plus",
+            "qwen-turbo"
         ]
 
     def is_healthy(self) -> bool:
-        """Vérifie si le service OpenAI est disponible"""
+        """Vérifie si le service Qwen est disponible"""
         return self.client is not None and self.api_key is not None
+
+    def get_model_name(self) -> str:
+        """Retourne le nom du modèle par défaut"""
+        return self.default_model

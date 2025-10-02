@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orchestrator-agent"
+version = "1.0.0"
+description = "AI Agent Orchestrator with ReAct Loop"
+authors = [
+    {name = "Code Maestro", email = "maestro@example.com"}
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "openai>=1.35.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0"
+]
+
+# ============================================================================
+# MICRO-JALON 2.6.1 - CONFIGURATION UTF-8 POUR TESTS
+# ============================================================================
+
+[tool.pytest.ini_options]
+# Configuration pytest avec encodage UTF-8 forcé
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--strict-config",
+    "--disable-warnings"
+]
+
+# Marqueurs de test
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests", 
+    "unicode: Unicode/Emoji tests",
+    "security: Security tests"
+]
+
+# Configuration asyncio pour les tests asynchrones
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "tests/*",
+    "*/conftest.py",
+    "*/__pycache__/*"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError"
+]

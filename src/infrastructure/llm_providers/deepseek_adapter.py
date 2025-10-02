@@ -1,4 +1,4 @@
-"""Adaptateur OpenAI - Implémentation de l'interface LLM pour OpenAI avec Function Calling"""
+"""Adaptateur DeepSeek - Implémentation de l'interface LLM pour DeepSeek (OpenAI-compatible)"""
 
 import os
 from typing import List, Optional, Dict, Any
@@ -10,19 +10,22 @@ from src.models.data_contracts import (
 )
 
 
-class OpenAIAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API OpenAI"""
+class DeepSeekAdapter(LLMServiceInterface):
+    """Adaptateur pour l'API DeepSeek (compatible OpenAI)"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur OpenAI
+        Initialise l'adaptateur DeepSeek
         
         Args:
-            api_key: Clé API OpenAI (optionnel, peut être définie via OPENAI_API_KEY)
+            api_key: Clé API DeepSeek (optionnel, peut être définie via DEEPSEEK_API_KEY)
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.client = AsyncOpenAI(api_key=self.api_key) if self.api_key else None
-        self.default_model = "gpt-3.5-turbo"
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        self.client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://api.deepseek.com/v1"
+        ) if self.api_key else None
+        self.default_model = "deepseek-chat"
 
     async def chat_completion(
         self,
@@ -32,9 +35,9 @@ class OpenAIAdapter(LLMServiceInterface):
         temperature: Optional[float] = None,
         tools: Optional[List[ToolDefinition]] = None
     ) -> ChatResponse:
-        """Génère une réponse via l'API OpenAI Chat Completion avec support des outils"""
+        """Génère une réponse via l'API DeepSeek avec support des outils"""
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise Exception("DeepSeek API key not configured")
 
         # Conversion des messages Pydantic vers le format OpenAI
         openai_messages = [
@@ -53,7 +56,7 @@ class OpenAIAdapter(LLMServiceInterface):
         if temperature is not None:
             params["temperature"] = temperature
             
-        # Ajout des outils si fournis
+        # Ajout des outils si fournis (format OpenAI)
         if tools:
             formatted_tools = await self.format_tools_for_llm(tools)
             if formatted_tools:
@@ -74,11 +77,11 @@ class OpenAIAdapter(LLMServiceInterface):
                 } if response.usage else None
             )
         except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+            raise Exception(f"DeepSeek API error: {str(e)}")
 
     async def format_tools_for_llm(self, tool_definitions: List[ToolDefinition]) -> List[Dict[str, Any]]:
         """
-        Convertit nos ToolDefinition internes vers le format OpenAI
+        Convertit nos ToolDefinition internes vers le format OpenAI (DeepSeek compatible)
         
         Args:
             tool_definitions: Liste des définitions d'outils internes
@@ -113,7 +116,7 @@ class OpenAIAdapter(LLMServiceInterface):
             Réponse d'orchestration avec éventuels appels d'outils
         """
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise Exception("DeepSeek API key not configured")
 
         # Construire les messages avec l'historique
         messages = list(request.conversation_history)
@@ -173,7 +176,7 @@ class OpenAIAdapter(LLMServiceInterface):
                 requires_tool_execution=requires_tool_execution
             )
         except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+            raise Exception(f"DeepSeek API error: {str(e)}")
 
     async def simple_completion(self, prompt: str, **kwargs) -> str:
         """Génère une réponse simple à partir d'un prompt"""
@@ -183,17 +186,20 @@ class OpenAIAdapter(LLMServiceInterface):
 
     def get_provider_name(self) -> str:
         """Retourne le nom du fournisseur"""
-        return "openai"
+        return "deepseek"
 
     def get_available_models(self) -> List[str]:
-        """Retourne la liste des modèles OpenAI disponibles"""
+        """Retourne la liste des modèles DeepSeek disponibles"""
         return [
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "gpt-3.5-turbo-16k"
+            "deepseek-chat",
+            "deepseek-vl-7b-chat",
+            "deepseek-coder"
         ]
 
     def is_healthy(self) -> bool:
-        """Vérifie si le service OpenAI est disponible"""
+        """Vérifie si le service DeepSeek est disponible"""
         return self.client is not None and self.api_key is not None
+
+    def get_model_name(self) -> str:
+        """Retourne le nom du modèle par défaut"""
+        return self.default_model

@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
-from src.models.data_contracts import ChatMessage, ChatResponse
+from src.models.data_contracts import ChatMessage, ChatResponse, OrchestrationRequest, OrchestrationResponse
 
 
 class LLMServiceInterface(ABC):
@@ -12,7 +12,7 @@ class LLMServiceInterface(ABC):
     async def chat_completion(
         self,
         messages: List[ChatMessage],
-        model: Optional[str] = None,
+        model_version: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None
     ) -> ChatResponse:
@@ -21,7 +21,7 @@ class LLMServiceInterface(ABC):
         
         Args:
             messages: Liste des messages de conversation
-            model: Nom du modèle à utiliser (optionnel)
+            model_version: Version exacte du modèle à utiliser (ex: 'gpt-4o', 'claude-3-opus-20240229')
             max_tokens: Nombre maximum de tokens (optionnel)
             temperature: Température pour la génération (optionnel)
             
@@ -74,5 +74,24 @@ class LLMServiceInterface(ABC):
         
         Returns:
             bool: True si le service est disponible
+        """
+        pass
+
+    @abstractmethod
+    async def orchestration_completion(
+        self,
+        request: OrchestrationRequest
+    ) -> OrchestrationResponse:
+        """
+        Méthode d'orchestration complète avec support des outils et model_version dynamique
+        
+        Args:
+            request: Requête d'orchestration avec configuration incluant model_version
+            
+        Returns:
+            OrchestrationResponse: Réponse d'orchestration avec éventuels appels d'outils
+            
+        Raises:
+            Exception: En cas d'erreur lors de la génération
         """
         pass

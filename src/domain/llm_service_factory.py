@@ -3,6 +3,13 @@
 from typing import Dict, Type, Optional
 from src.domain.llm_service_interface import LLMServiceInterface
 from src.infrastructure.llm_providers.openai_adapter import OpenAIAdapter
+from src.infrastructure.llm_providers.gemini_adapter import GeminiAdapter
+from src.infrastructure.llm_providers.anthropic_adapter import AnthropicAdapter
+from src.infrastructure.llm_providers.mistral_adapter import MistralAdapter
+from src.infrastructure.llm_providers.grok_adapter import GrokAdapter
+from src.infrastructure.llm_providers.deepseek_adapter import DeepSeekAdapter
+from src.infrastructure.llm_providers.kimi_k2_adapter import KimiK2Adapter
+from src.infrastructure.llm_providers.qwen_adapter import QwenAdapter
 from src.models.data_contracts import LLMProvider
 
 
@@ -12,9 +19,13 @@ class LLMServiceFactory:
     # Registry des adaptateurs disponibles
     _providers: Dict[str, Type[LLMServiceInterface]] = {
         LLMProvider.OPENAI.value: OpenAIAdapter,
-        # Futurs adaptateurs à ajouter ici
-        # LLMProvider.ANTHROPIC.value: AnthropicAdapter,
-        # LLMProvider.GEMINI.value: GeminiAdapter,
+        LLMProvider.GEMINI.value: GeminiAdapter,
+        LLMProvider.ANTHROPIC.value: AnthropicAdapter,
+        LLMProvider.MISTRAL.value: MistralAdapter,
+        LLMProvider.GROK.value: GrokAdapter,
+        LLMProvider.DEEPSEEK.value: DeepSeekAdapter,
+        LLMProvider.KIMI_K2.value: KimiK2Adapter,
+        LLMProvider.QWEN.value: QwenAdapter,
     }
 
     # Cache des instances créées

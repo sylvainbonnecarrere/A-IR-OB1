@@ -14,6 +14,13 @@ pydantic-settings>=2.1.0
 # Jalon 2.1 - Adaptateurs LLM
 openai>=1.35.0
 
+# Jalon 3.1 - Multi-Fournisseurs (Gemini et Anthropic)
+google-genai>=0.8.0
+anthropic>=0.28.0
+
+# Jalon 3.2 - Multi-Fournisseurs Avancés
+mistralai>=1.0.0
+
 # Dépendances additionnelles pour les prochains jalons :
 # - httpx (client HTTP asynchrone pour les APIs LLM)
 # - python-multipart (support upload de fichiers)

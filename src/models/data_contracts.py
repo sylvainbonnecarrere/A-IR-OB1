@@ -95,6 +95,11 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    MISTRAL = "mistral"
+    GROK = "grok"
+    QWEN = "qwen"
+    DEEPSEEK = "deepseek"
+    KIMI_K2 = "kimi_k2"
 
 
 class ChatMessage(BaseModel):
@@ -260,17 +265,17 @@ class GetCurrentTimeTool(ToolDefinition):
 class AgentConfig(BaseModel):
     """Configuration pour un agent IA avec outils et validation sécurisée"""
     provider: LLMProvider = Field(default=LLMProvider.OPENAI, description="Fournisseur LLM")
-    model: str = Field(default="gpt-3.5-turbo", description="Modèle LLM à utiliser")
+    model_version: str = Field(default="gpt-4o", description="Version exacte du modèle LLM à utiliser")
     temperature: float = Field(default=0.7, description="Température de génération")
     max_tokens: int = Field(default=1000, description="Nombre maximum de tokens")
     tools_enabled: bool = Field(default=False, description="Activer les outils")
     available_tools: List[str] = Field(default_factory=list, description="Liste des outils disponibles")
     system_prompt: Optional[str] = Field(default=None, description="Prompt système personnalisé")
     
-    @field_validator('model')
+    @field_validator('model_version')
     @classmethod
-    def validate_model(cls, v: str) -> str:
-        """Validation du nom de modèle"""
+    def validate_model_version(cls, v: str) -> str:
+        """Validation du nom de version de modèle"""
         return normalize_and_sanitize_text(v)
     
     @field_validator('system_prompt')

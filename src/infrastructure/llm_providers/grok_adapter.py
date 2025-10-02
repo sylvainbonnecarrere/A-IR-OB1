@@ -1,4 +1,4 @@
-"""Adaptateur OpenAI - Implémentation de l'interface LLM pour OpenAI avec Function Calling"""
+"""Adaptateur Grok - Implémentation de l'interface LLM pour xAI Grok (OpenAI-compatible)"""
 
 import os
 from typing import List, Optional, Dict, Any
@@ -10,19 +10,22 @@ from src.models.data_contracts import (
 )
 
 
-class OpenAIAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API OpenAI"""
+class GrokAdapter(LLMServiceInterface):
+    """Adaptateur pour l'API xAI Grok (compatible OpenAI)"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur OpenAI
+        Initialise l'adaptateur Grok
         
         Args:
-            api_key: Clé API OpenAI (optionnel, peut être définie via OPENAI_API_KEY)
+            api_key: Clé API xAI (optionnel, peut être définie via GROK_API_KEY)
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.client = AsyncOpenAI(api_key=self.api_key) if self.api_key else None
-        self.default_model = "gpt-3.5-turbo"
+        self.api_key = api_key or os.getenv("GROK_API_KEY")
+        self.client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://api.x.ai/v1"
+        ) if self.api_key else None
+        self.default_model = "grok-3-latest"
 
     async def chat_completion(
         self,
@@ -32,9 +35,9 @@ class OpenAIAdapter(LLMServiceInterface):
         temperature: Optional[float] = None,
         tools: Optional[List[ToolDefinition]] = None
     ) -> ChatResponse:
-        """Génère une réponse via l'API OpenAI Chat Completion avec support des outils"""
+        """Génère une réponse via l'API Grok avec support des outils (limité selon la doc)"""
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise Exception("Grok API key not configured")
 
         # Conversion des messages Pydantic vers le format OpenAI
         openai_messages = [
@@ -53,12 +56,14 @@ class OpenAIAdapter(LLMServiceInterface):
         if temperature is not None:
             params["temperature"] = temperature
             
-        # Ajout des outils si fournis
+        # Note: Selon la doc, Grok ne supporte pas le Function Calling
+        # Mais on garde l'interface cohérente pour l'extensibilité future
         if tools:
             formatted_tools = await self.format_tools_for_llm(tools)
             if formatted_tools:
-                params["tools"] = formatted_tools
-                params["tool_choice"] = "auto"
+                # Grok ne supporte pas les tools selon la doc
+                # On pourrait les ignorer ou lever un warning
+                print("Warning: Grok ne supporte pas le Function Calling selon la documentation")
 
         try:
             response = await self.client.chat.completions.create(**params)
@@ -74,22 +79,26 @@ class OpenAIAdapter(LLMServiceInterface):
                 } if response.usage else None
             )
         except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+            raise Exception(f"Grok API error: {str(e)}")
 
     async def format_tools_for_llm(self, tool_definitions: List[ToolDefinition]) -> List[Dict[str, Any]]:
         """
-        Convertit nos ToolDefinition internes vers le format OpenAI
+        Convertit nos ToolDefinition internes vers le format OpenAI (pour compatibilité future)
+        
+        Note: Grok ne supporte pas le Function Calling selon la documentation actuelle,
+        mais on maintient l'interface pour la cohérence et l'extensibilité future.
         
         Args:
             tool_definitions: Liste des définitions d'outils internes
             
         Returns:
-            Liste des outils au format OpenAI
+            Liste des outils au format OpenAI (non utilisée par Grok actuellement)
         """
         formatted_tools = []
         
         for tool in tool_definitions:
             try:
+                # Format OpenAI standard (même si non supporté par Grok actuellement)
                 tool_schema = tool.get_tool_schema()
                 formatted_tools.append(tool_schema)
             except Exception as e:
@@ -104,16 +113,16 @@ class OpenAIAdapter(LLMServiceInterface):
         request: OrchestrationRequest
     ) -> OrchestrationResponse:
         """
-        Méthode d'orchestration complète avec support des outils
+        Méthode d'orchestration complète (sans support des outils pour Grok)
         
         Args:
             request: Requête d'orchestration avec configuration et outils
             
         Returns:
-            Réponse d'orchestration avec éventuels appels d'outils
+            Réponse d'orchestration sans appels d'outils
         """
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise Exception("Grok API key not configured")
 
         # Construire les messages avec l'historique
         messages = list(request.conversation_history)
@@ -133,32 +142,17 @@ class OpenAIAdapter(LLMServiceInterface):
             "temperature": request.agent_config.temperature,
         }
 
-        # Ajout des outils si activés
+        # Note: Grok ne supporte pas les outils selon la documentation
         if request.agent_config.tools_enabled and request.agent_config.available_tools:
-            # Pour cette démo, on utilise GetCurrentTimeTool
-            from src.models.data_contracts import GetCurrentTimeTool
-            tools = [GetCurrentTimeTool()]
-            formatted_tools = await self.format_tools_for_llm(tools)
-            if formatted_tools:
-                params["tools"] = formatted_tools
-                params["tool_choice"] = "auto"
+            print("Warning: Grok ne supporte pas le Function Calling - les outils seront ignorés")
 
         try:
             response = await self.client.chat.completions.create(**params)
             message = response.choices[0].message
 
-            # Vérifier si l'IA veut appeler des outils
+            # Pas de tool calls pour Grok
             tool_calls = []
             requires_tool_execution = False
-            
-            if hasattr(message, 'tool_calls') and message.tool_calls:
-                requires_tool_execution = True
-                for tool_call in message.tool_calls:
-                    tool_calls.append(ToolCall(
-                        id=tool_call.id,
-                        tool_name=tool_call.function.name,
-                        arguments=eval(tool_call.function.arguments) if tool_call.function.arguments else {}
-                    ))
 
             return OrchestrationResponse(
                 content=message.content,
@@ -173,7 +167,7 @@ class OpenAIAdapter(LLMServiceInterface):
                 requires_tool_execution=requires_tool_execution
             )
         except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+            raise Exception(f"Grok API error: {str(e)}")
 
     async def simple_completion(self, prompt: str, **kwargs) -> str:
         """Génère une réponse simple à partir d'un prompt"""
@@ -183,17 +177,20 @@ class OpenAIAdapter(LLMServiceInterface):
 
     def get_provider_name(self) -> str:
         """Retourne le nom du fournisseur"""
-        return "openai"
+        return "grok"
 
     def get_available_models(self) -> List[str]:
-        """Retourne la liste des modèles OpenAI disponibles"""
+        """Retourne la liste des modèles Grok disponibles"""
         return [
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "gpt-3.5-turbo-16k"
+            "grok-3-latest",
+            "grok-vision-latest",
+            "grok-2-image"
         ]
 
     def is_healthy(self) -> bool:
-        """Vérifie si le service OpenAI est disponible"""
+        """Vérifie si le service Grok est disponible"""
         return self.client is not None and self.api_key is not None
+
+    def get_model_name(self) -> str:
+        """Retourne le nom du modèle par défaut"""
+        return self.default_model
