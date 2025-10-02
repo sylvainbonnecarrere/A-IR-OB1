@@ -10,6 +10,8 @@ from src.api.dependencies import (
 )
 from src.domain.llm_service_interface import LLMServiceInterface
 from src.domain.llm_service_factory import LLMServiceFactory
+from src.domain.agent_orchestrator import AgentOrchestrator
+from src.infrastructure.tool_executor import ToolExecutor
 from src.models.data_contracts import (
     HealthResponse,
     ServiceTestRequest,
@@ -18,7 +20,9 @@ from src.models.data_contracts import (
     ChatRequest,
     ChatResponse,
     ChatMessage,
-    ErrorResponse
+    ErrorResponse,
+    OrchestrationRequest,
+    OrchestrationResponse
 )
 
 # Création du router
@@ -167,3 +171,97 @@ async def debug_factory():
         "registered_adapters": list(LLMServiceFactory._providers.keys()),
         "timestamp": datetime.now().isoformat()
     }
+
+
+# ============================================================================
+# JALON 2.5 - ENDPOINT D'ORCHESTRATION AVEC BOUCLE REACT
+# ============================================================================
+
+def get_tool_executor() -> ToolExecutor:
+    """
+    Dependency pour obtenir une instance de ToolExecutor
+    
+    Returns:
+        ToolExecutor: Instance configurée avec les outils disponibles
+    """
+    return ToolExecutor()
+
+
+@router.post("/api/orchestrate", response_model=OrchestrationResponse, summary="Agent Orchestration with ReAct Loop")
+async def orchestrate_agent(
+    request: OrchestrationRequest,
+    llm_service: LLMServiceInterface = Depends(get_default_llm_service),
+    tool_executor: ToolExecutor = Depends(get_tool_executor)
+):
+    """
+    Endpoint principal d'orchestration d'agent avec boucle ReAct
+    
+    Ce endpoint coordonne les services LLM et d'exécution d'outils pour implémenter
+    une boucle complète de Reasoning + Acting (ReAct):
+    
+    1. **Reasoning**: L'agent analyse la requête et décide des actions
+    2. **Acting**: Exécution des outils nécessaires
+    3. **Feedback**: Rétro-injection des résultats pour la prochaine itération
+    4. **Repeat**: Répétition jusqu'à obtention d'une réponse finale
+    
+    Args:
+        request: Requête d'orchestration contenant le message et la configuration
+        llm_service: Service LLM injecté (par défaut OpenAI)
+        tool_executor: Exécuteur d'outils injecté
+        
+    Returns:
+        OrchestrationResponse: Réponse finale après boucle ReAct complète
+        
+    Raises:
+        HTTPException: En cas d'erreur lors de l'orchestration
+        
+    Example:
+        ```json
+        {
+            "message": "Quelle est l'heure maintenant ?",
+            "agent_config": {
+                "provider": "openai",
+                "model": "gpt-3.5-turbo",
+                "tools_enabled": true,
+                "available_tools": ["get_current_time"]
+            },
+            "conversation_history": []
+        }
+        ```
+    """
+    try:
+        # Validation de la configuration
+        if not request.agent_config:
+            raise HTTPException(
+                status_code=400, 
+                detail="Configuration agent requise pour l'orchestration"
+            )
+        
+        # Création de l'orchestrateur avec injection de dépendances
+        orchestrator = AgentOrchestrator(
+            llm_service=llm_service,
+            tool_executor=tool_executor
+        )
+        
+        # Construction de l'historique avec le message utilisateur
+        history = list(request.conversation_history)
+        if request.message:
+            history.append(ChatMessage(role="user", content=request.message))
+        
+        # Exécution de la boucle ReAct
+        response = await orchestrator.run_orchestration(
+            config=request.agent_config,
+            history=history
+        )
+        
+        return response
+        
+    except HTTPException:
+        # Re-lancer les HTTPException directement
+        raise
+    except Exception as e:
+        # Capturer toutes les autres erreurs
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erreur lors de l'orchestration: {str(e)}"
+        )
