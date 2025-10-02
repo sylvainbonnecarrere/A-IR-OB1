@@ -3,6 +3,9 @@
 venv/
 env/
 ENV/
+.virtualenv/
+.conda/
+conda-meta/
 
 # Fichiers Python
 __pycache__/
@@ -25,38 +28,105 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.manifest
+*.spec
 
-# IDEs
+# IDEs et Éditeurs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.spyderproject
+.spyproject
+.rope_project_cache/
+.sublime-project
+.sublime-workspace
 
-# OS
+# OS spécifiques
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
 
-# Logs
+# Logs et Debug
 *.log
 logs/
+debug.log
+error.log
+*.out
 
-# Temporary files
+# Fichiers temporaires
 *.tmp
+*.temp
 temp/
+.tmp/
+.cache/
 
-# API Keys (sécurité)
+# Configuration et Secrets
 *.env
 .env.*
+.environment
 api_keys.txt
 secrets/
+config.ini
+settings.ini
+.secrets
+.local
 
-# Coverage reports
-htmlcov/
-.coverage
+# FastAPI spécifique
+instance/
+.webassets-cache
 .pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
 
-# MyPy
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# PyCharm
+.idea/
+
+# mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+db.sqlite3
+
+# Documentation builds
+docs/_build/
+site/
