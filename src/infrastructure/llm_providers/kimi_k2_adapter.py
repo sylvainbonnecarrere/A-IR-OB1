@@ -1,6 +1,7 @@
 """Adaptateur Kimi K2 - Implémentation de l'interface LLM pour Kimi K2/Moonshot (OpenAI-compatible)"""
 
 import os
+import logging
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI
 from src.domain.llm_service_interface import LLMServiceInterface
@@ -8,24 +9,43 @@ from src.models.data_contracts import (
     ChatMessage, ChatResponse, ToolDefinition, ToolCall, 
     OrchestrationRequest, OrchestrationResponse
 )
+from src.infrastructure.secure_api_key_handler import (
+    SecureAPIKeyHandler, ProviderType, APIKeyError
+)
+
+logger = logging.getLogger(__name__)
 
 
 class KimiK2Adapter(LLMServiceInterface):
-    """Adaptateur pour l'API Kimi K2/Moonshot (compatible OpenAI)"""
+    """Adaptateur pour l'API Kimi K2/Moonshot (compatible OpenAI) avec sécurisation des clés API"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur Kimi K2
+        Initialise l'adaptateur Kimi K2 avec validation sécurisée des clés API
         
         Args:
             api_key: Clé API Kimi K2 (optionnel, peut être définie via KIMI_K2_API_KEY)
+            
+        Raises:
+            APIKeyError: Si la clé API est manquante ou invalide
         """
-        self.api_key = api_key or os.getenv("KIMI_K2_API_KEY")
-        self.client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url="https://api.moonshot.cn/v1"
-        ) if self.api_key else None
-        self.default_model = "moonshot-v1-128k"
+        try:
+            # Validation sécurisée de la clé API
+            raw_key = api_key or os.getenv("KIMI_K2_API_KEY")
+            self.secure_handler = SecureAPIKeyHandler()
+            self.api_key = self.secure_handler.validate_api_key(raw_key, ProviderType.KIMI_K2)
+            
+            self.client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url="https://api.moonshot.cn/v1"
+            )
+            self.default_model = "moonshot-v1-128k"
+            
+            logger.info(f"Kimi K2 adapter initialized with key: {self.secure_handler.mask_api_key(self.api_key)}")
+            
+        except APIKeyError as e:
+            logger.error(f"Failed to initialize Kimi K2 adapter: {e}")
+            raise
 
     async def chat_completion(
         self,
@@ -37,7 +57,8 @@ class KimiK2Adapter(LLMServiceInterface):
     ) -> ChatResponse:
         """Génère une réponse via l'API Kimi K2 avec support des outils"""
         if not self.client:
-            raise Exception("Kimi K2 API key not configured")
+            logger.error(f"Kimi K2 client not initialized - key: {self.secure_handler.mask_api_key(self.api_key) if hasattr(self, 'secure_handler') else 'MISSING'}")
+            raise APIKeyError("Kimi K2 API key not configured")
 
         # Conversion des messages Pydantic vers le format OpenAI
         openai_messages = [

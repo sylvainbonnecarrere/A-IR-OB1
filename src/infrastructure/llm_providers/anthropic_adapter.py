@@ -2,6 +2,7 @@
 
 import os
 import json
+import logging
 from typing import List, Optional, Dict, Any
 import anthropic
 from src.domain.llm_service_interface import LLMServiceInterface
@@ -9,21 +10,53 @@ from src.models.data_contracts import (
     ChatMessage, ChatResponse, ToolDefinition, ToolCall, 
     OrchestrationRequest, OrchestrationResponse
 )
+from src.infrastructure.secure_api_key_handler import (
+    SecureAPIKeyHandler, ProviderType, APIKeyError, create_secure_client_info
+)
+
+# Configuration du logger
+logger = logging.getLogger(__name__)
 
 
 class AnthropicAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API Anthropic Claude"""
+    """Adaptateur pour l'API Anthropic Claude avec validation et gestion sécurisée des clés"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur Anthropic
+        Initialise l'adaptateur Anthropic avec validation sécurisée de la clé API.
         
         Args:
             api_key: Clé API Anthropic (optionnel, peut être définie via ANTHROPIC_API_KEY)
+            
+        Raises:
+            APIKeyError: Si la clé API est manquante ou invalide
         """
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        self.client = anthropic.Anthropic(api_key=self.api_key) if self.api_key else None
-        self.default_model = "claude-sonnet-4-5"
+        try:
+            # Validation et chargement sécurisé de la clé API
+            self.api_key = SecureAPIKeyHandler.load_and_validate_api_key(
+                ProviderType.ANTHROPIC, api_key
+            )
+            
+            # Initialisation du client Anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
+            self.default_model = "claude-3-5-sonnet-20241022"
+            
+            # Log sécurisé de l'initialisation
+            config_info = SecureAPIKeyHandler.get_secure_config_info(
+                ProviderType.ANTHROPIC, self.api_key
+            )
+            logger.info(f"Anthropic adapter initialisé: {config_info}")
+            
+        except APIKeyError as e:
+            logger.error(f"Erreur initialisation Anthropic adapter: {e}")
+            self.client = None
+            self.api_key = None
+            raise
+        except Exception as e:
+            logger.error(f"Erreur inattendue lors de l'initialisation Anthropic: {e}")
+            self.client = None
+            self.api_key = None
+            raise APIKeyError(f"Échec de l'initialisation du client Anthropic: {str(e)}")
 
     async def chat_completion(
         self,

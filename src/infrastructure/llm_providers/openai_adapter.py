@@ -1,6 +1,7 @@
 """Adaptateur OpenAI - Implémentation de l'interface LLM pour OpenAI avec Function Calling"""
 
 import os
+import logging
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI
 from src.domain.llm_service_interface import LLMServiceInterface
@@ -8,21 +9,53 @@ from src.models.data_contracts import (
     ChatMessage, ChatResponse, ToolDefinition, ToolCall, 
     OrchestrationRequest, OrchestrationResponse
 )
+from src.infrastructure.secure_api_key_handler import (
+    SecureAPIKeyHandler, ProviderType, APIKeyError, create_secure_client_info
+)
+
+# Configuration du logger
+logger = logging.getLogger(__name__)
 
 
 class OpenAIAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API OpenAI"""
+    """Adaptateur pour l'API OpenAI avec validation et gestion sécurisée des clés"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur OpenAI
+        Initialise l'adaptateur OpenAI avec validation sécurisée de la clé API.
         
         Args:
             api_key: Clé API OpenAI (optionnel, peut être définie via OPENAI_API_KEY)
+            
+        Raises:
+            APIKeyError: Si la clé API est manquante ou invalide
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.client = AsyncOpenAI(api_key=self.api_key) if self.api_key else None
-        self.default_model = "gpt-3.5-turbo"
+        try:
+            # Validation et chargement sécurisé de la clé API
+            self.api_key = SecureAPIKeyHandler.load_and_validate_api_key(
+                ProviderType.OPENAI, api_key
+            )
+            
+            # Initialisation du client OpenAI
+            self.client = AsyncOpenAI(api_key=self.api_key)
+            self.default_model = "gpt-3.5-turbo"
+            
+            # Log sécurisé de l'initialisation
+            config_info = SecureAPIKeyHandler.get_secure_config_info(
+                ProviderType.OPENAI, self.api_key
+            )
+            logger.info(f"OpenAI adapter initialisé: {config_info}")
+            
+        except APIKeyError as e:
+            logger.error(f"Erreur initialisation OpenAI adapter: {e}")
+            self.client = None
+            self.api_key = None
+            raise
+        except Exception as e:
+            logger.error(f"Erreur inattendue lors de l'initialisation OpenAI: {e}")
+            self.client = None
+            self.api_key = None
+            raise APIKeyError(f"Échec de l'initialisation du client OpenAI: {str(e)}")
 
     async def chat_completion(
         self,
@@ -34,7 +67,7 @@ class OpenAIAdapter(LLMServiceInterface):
     ) -> ChatResponse:
         """Génère une réponse via l'API OpenAI Chat Completion avec support des outils"""
         if not self.client:
-            raise Exception("OpenAI API key not configured")
+            raise APIKeyError("OpenAI client non initialisé. Vérifiez la configuration de votre clé API.")
 
         # Conversion des messages Pydantic vers le format OpenAI
         openai_messages = [

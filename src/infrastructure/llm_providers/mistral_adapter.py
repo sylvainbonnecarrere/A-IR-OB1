@@ -1,6 +1,7 @@
 """Adaptateur Mistral - Implémentation de l'interface LLM pour Mistral avec Function Calling"""
 
 import os
+import logging
 from typing import List, Optional, Dict, Any
 from mistralai.client import MistralClient
 from src.domain.llm_service_interface import LLMServiceInterface
@@ -8,21 +9,40 @@ from src.models.data_contracts import (
     ChatMessage, ChatResponse, ToolDefinition, ToolCall, 
     OrchestrationRequest, OrchestrationResponse
 )
+from src.infrastructure.secure_api_key_handler import (
+    SecureAPIKeyHandler, ProviderType, APIKeyError
+)
+
+logger = logging.getLogger(__name__)
 
 
 class MistralAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API Mistral"""
+    """Adaptateur pour l'API Mistral avec sécurisation des clés API"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur Mistral
+        Initialise l'adaptateur Mistral avec validation sécurisée des clés API
         
         Args:
             api_key: Clé API Mistral (optionnel, peut être définie via MISTRAL_API_KEY)
+            
+        Raises:
+            APIKeyError: Si la clé API est manquante ou invalide
         """
-        self.api_key = api_key or os.getenv("MISTRAL_API_KEY")
-        self.client = MistralClient(api_key=self.api_key) if self.api_key else None
-        self.default_model = "mistral-large-latest"
+        try:
+            # Validation sécurisée de la clé API
+            raw_key = api_key or os.getenv("MISTRAL_API_KEY")
+            self.secure_handler = SecureAPIKeyHandler()
+            self.api_key = self.secure_handler.validate_api_key(raw_key, ProviderType.MISTRAL)
+            
+            self.client = MistralClient(api_key=self.api_key)
+            self.default_model = "mistral-large-latest"
+            
+            logger.info(f"Mistral adapter initialized with key: {self.secure_handler.mask_api_key(self.api_key)}")
+            
+        except APIKeyError as e:
+            logger.error(f"Failed to initialize Mistral adapter: {e}")
+            raise
 
     async def chat_completion(
         self,
@@ -34,7 +54,8 @@ class MistralAdapter(LLMServiceInterface):
     ) -> ChatResponse:
         """Génère une réponse via l'API Mistral avec support des outils"""
         if not self.client:
-            raise Exception("Mistral API key not configured")
+            logger.error(f"Mistral client not initialized - key: {self.secure_handler.mask_api_key(self.api_key) if hasattr(self, 'secure_handler') else 'MISSING'}")
+            raise APIKeyError("Mistral API key not configured")
 
         # Conversion des messages vers le format Mistral
         mistral_messages = [

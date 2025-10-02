@@ -1,6 +1,7 @@
 """Adaptateur Gemini - Implémentation de l'interface LLM pour Google Gemini avec Function Calling"""
 
 import os
+import logging
 from typing import List, Optional, Dict, Any
 from google import genai
 from google.genai import types
@@ -9,21 +10,53 @@ from src.models.data_contracts import (
     ChatMessage, ChatResponse, ToolDefinition, ToolCall, 
     OrchestrationRequest, OrchestrationResponse
 )
+from src.infrastructure.secure_api_key_handler import (
+    SecureAPIKeyHandler, ProviderType, APIKeyError, create_secure_client_info
+)
+
+# Configuration du logger
+logger = logging.getLogger(__name__)
 
 
 class GeminiAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API Google Gemini"""
+    """Adaptateur pour l'API Google Gemini avec validation et gestion sécurisée des clés"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur Gemini
+        Initialise l'adaptateur Gemini avec validation sécurisée de la clé API.
         
         Args:
             api_key: Clé API Gemini (optionnel, peut être définie via GEMINI_API_KEY)
+            
+        Raises:
+            APIKeyError: Si la clé API est manquante ou invalide
         """
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.client = genai.Client(api_key=self.api_key) if self.api_key else None
-        self.default_model = "gemini-2.5-flash"
+        try:
+            # Validation et chargement sécurisé de la clé API
+            self.api_key = SecureAPIKeyHandler.load_and_validate_api_key(
+                ProviderType.GEMINI, api_key
+            )
+            
+            # Initialisation du client Gemini
+            self.client = genai.Client(api_key=self.api_key)
+            self.default_model = "gemini-1.5-pro"
+            
+            # Log sécurisé de l'initialisation
+            config_info = SecureAPIKeyHandler.get_secure_config_info(
+                ProviderType.GEMINI, self.api_key
+            )
+            logger.info(f"Gemini adapter initialisé: {config_info}")
+            
+        except APIKeyError as e:
+            logger.error(f"Erreur initialisation Gemini adapter: {e}")
+            self.client = None
+            self.api_key = None
+            raise
+        except Exception as e:
+            logger.error(f"Erreur inattendue lors de l'initialisation Gemini: {e}")
+            self.client = None
+            self.api_key = None
+            raise APIKeyError(f"Échec de l'initialisation du client Gemini: {str(e)}")
 
     async def chat_completion(
         self,

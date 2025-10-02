@@ -377,8 +377,7 @@ session_manager = InMemorySessionManager()
 
 # Service de synthèse d'historique
 history_summarizer = HistorySummarizer(
-    llm_service_factory=LLMServiceFactory(),
-    default_config=DEFAULT_HISTORY_CONFIG
+    session_manager=session_manager
 )
 
 

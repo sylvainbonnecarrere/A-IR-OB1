@@ -1,6 +1,7 @@
 """Adaptateur Qwen - Implémentation de l'interface LLM pour Alibaba Qwen (OpenAI-compatible)"""
 
 import os
+import logging
 from typing import List, Optional, Dict, Any
 from openai import AsyncOpenAI
 from src.domain.llm_service_interface import LLMServiceInterface
@@ -8,24 +9,43 @@ from src.models.data_contracts import (
     ChatMessage, ChatResponse, ToolDefinition, ToolCall, 
     OrchestrationRequest, OrchestrationResponse
 )
+from src.infrastructure.secure_api_key_handler import (
+    SecureAPIKeyHandler, ProviderType, APIKeyError
+)
+
+logger = logging.getLogger(__name__)
 
 
 class QwenAdapter(LLMServiceInterface):
-    """Adaptateur pour l'API Qwen via DashScope (compatible OpenAI)"""
+    """Adaptateur pour l'API Qwen via DashScope (compatible OpenAI) avec sécurisation des clés API"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialise l'adaptateur Qwen
+        Initialise l'adaptateur Qwen avec validation sécurisée des clés API
         
         Args:
             api_key: Clé API Qwen/DashScope (optionnel, peut être définie via QWEN_API_KEY)
+            
+        Raises:
+            APIKeyError: Si la clé API est manquante ou invalide
         """
-        self.api_key = api_key or os.getenv("QWEN_API_KEY")
-        self.client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url="https://dashscope.aliyuncs.com/v1"
-        ) if self.api_key else None
-        self.default_model = "qwen-max"
+        try:
+            # Validation sécurisée de la clé API
+            raw_key = api_key or os.getenv("QWEN_API_KEY")
+            self.secure_handler = SecureAPIKeyHandler()
+            self.api_key = self.secure_handler.validate_api_key(raw_key, ProviderType.QWEN)
+            
+            self.client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url="https://dashscope.aliyuncs.com/v1"
+            )
+            self.default_model = "qwen-max"
+            
+            logger.info(f"Qwen adapter initialized with key: {self.secure_handler.mask_api_key(self.api_key)}")
+            
+        except APIKeyError as e:
+            logger.error(f"Failed to initialize Qwen adapter: {e}")
+            raise
 
     async def chat_completion(
         self,
@@ -37,7 +57,8 @@ class QwenAdapter(LLMServiceInterface):
     ) -> ChatResponse:
         """Génère une réponse via l'API Qwen avec support des outils"""
         if not self.client:
-            raise Exception("Qwen API key not configured")
+            logger.error(f"Qwen client not initialized - key: {self.secure_handler.mask_api_key(self.api_key) if hasattr(self, 'secure_handler') else 'MISSING'}")
+            raise APIKeyError("Qwen API key not configured")
 
         # Conversion des messages Pydantic vers le format OpenAI
         openai_messages = [
