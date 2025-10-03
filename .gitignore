@@ -70,6 +70,7 @@ temp/
 # Configuration et Secrets
 *.env
 .env.*
+!.env.example
 .environment
 api_keys.txt
 secrets/

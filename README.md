@@ -103,8 +103,16 @@ pip install -r requirements.txt
 ### 🛡️ Configuration Sécurisée des API Keys
 
 **1. Copiez le template de configuration :**
+
 ```bash
+# Sur Linux/macOS :
 cp .env.example .env
+
+# Sur Windows PowerShell :
+copy .env.example .env
+
+# Sur Windows Command Prompt :
+copy .env.example .env
 ```
 
 **2. Configurez vos clés API dans `.env` :**
@@ -174,6 +182,29 @@ LOG_LEVEL=INFO
 # Monitoring (Jalon 4.1-B)
 MONITORING_ENABLED=true
 METRICS_COLLECTION_INTERVAL=30
+```
+
+### ✅ Validation de l'Installation
+
+**Vérifiez votre installation avec le script de validation :**
+
+```bash
+python validate_setup.py
+```
+
+Le script vérifie automatiquement :
+- ✅ Version Python 3.11+
+- ✅ Environnement virtuel activé
+- ✅ Dépendances installées
+- ✅ Fichier .env configuré
+- ✅ Structure du projet
+- ✅ Ports disponibles
+- ✅ Test de démarrage
+
+**Résultat attendu :**
+```
+🎉 Installation validée ! Prêt pour le démarrage.
+📊 Résultats: 15/15 vérifications passées (100.0%)
 ```
 
 ## 💻 Démarrage et Utilisation
