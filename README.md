@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🚀 Orchestrator Agent - Plateforme IA Multi-Providers Sécurisée
 
 [![Security Status](https://img.shields.io/badge/Security-Production%20Ready-green.svg)](./docs/VALIDATION_MICRO_JALON_4_1_A.md)
