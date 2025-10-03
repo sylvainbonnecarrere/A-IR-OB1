@@ -189,7 +189,7 @@ METRICS_COLLECTION_INTERVAL=30
 **Vérifiez votre installation avec le script de validation :**
 
 ```bash
-python validate_setup.py
+python tests/validate_setup.py
 ```
 
 Le script vérifie automatiquement :
