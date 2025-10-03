@@ -935,7 +935,7 @@ python main.py
 pip install requests
 
 # 3. Configurer les clés API dans .env
-# (Voir SECURITY.md pour la configuration complète)
+# (Voir ./SECURITY.md pour la configuration complète)
 ```
 
 ### Lancement des Scénarios

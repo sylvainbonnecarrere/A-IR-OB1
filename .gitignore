@@ -136,6 +136,6 @@ debug/
 tests/
 
 # Instructions et fichiers de développement privés
-copilot-agent-instructions.md
+docs/references/copilot-agent-instructions.md
 *.instructions.md
 *-instructions.md

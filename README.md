@@ -1,6 +1,6 @@
 # 🚀 Orchestrator Agent - Plateforme IA Multi-Providers Sécurisée
 
-[![Security Status](https://img.shields.io/badge/Security-Production%20Ready-green.svg)](./VALIDATION_MICRO_JALON_4_1_A.md)
+[![Security Status](https://img.shields.io/badge/Security-Production%20Ready-green.svg)](./docs/VALIDATION_MICRO_JALON_4_1_A.md)
 [![Providers](https://img.shields.io/badge/LLM%20Providers-8%20Supported-blue.svg)](#-fournisseurs-llm-supportés)
 [![Architecture](https://img.shields.io/badge/Architecture-Hexagonale-orange.svg)](#️-architecture-hexagonale)
 [![Tests](https://img.shields.io/badge/Tests-9%2F9%20Passing-brightgreen.svg)](./tests/test_micro_jalon_4_1_a.py)
@@ -687,7 +687,7 @@ spec:
 
 ### Rapports de Validation
 
-Consultez le rapport complet : [VALIDATION_MICRO_JALON_4_1_A.md](./VALIDATION_MICRO_JALON_4_1_A.md)
+Consultez le rapport complet : [VALIDATION_MICRO_JALON_4_1_A.md](./docs/VALIDATION_MICRO_JALON_4_1_A.md)
 
 ## 🧪 Tests et Qualité
 
@@ -826,10 +826,10 @@ curl http://localhost:8000/api/providers
 
 ## 📚 Documentation Complète
 
-- **[VALIDATION_MICRO_JALON_4_1_A.md](./VALIDATION_MICRO_JALON_4_1_A.md)** : Rapport de sécurité complet
-- **[SECURITY.md](./SECURITY.md)** : Guide de sécurité détaillé
-- **[MONITORING.md](./MONITORING.md)** : Guide de monitoring
-- **[EXAMPLES.md](./EXAMPLES.md)** : Exemples d'utilisation
+- **[VALIDATION_MICRO_JALON_4_1_A.md](./docs/VALIDATION_MICRO_JALON_4_1_A.md)** : Rapport de sécurité complet
+- **[SECURITY.md](./docs/SECURITY.md)** : Guide de sécurité détaillé
+- **[MONITORING.md](./docs/MONITORING.md)** : Guide de monitoring
+- **[EXAMPLES.md](./docs/EXAMPLES.md)** : Exemples d'utilisation
 - **[API Docs](http://localhost:8000/docs)** : Documentation interactive
 
 ## 🤝 Contribution et Support
@@ -877,12 +877,7 @@ L'**Orchestrator Agent** est une plateforme **Production-Ready** qui combine :
 
 [![GitHub](https://img.shields.io/badge/GitHub-A--IR--OB1-blue?logo=github)](https://github.com/sylvainbonnecarrere/A-IR-OB1)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![Security](https://img.shields.io/badge/Security-Enterprise%20Ready-green.svg)](./VALIDATION_MICRO_JALON_4_1_A.md)
-        """Implémentation spécifique du nouveau provider"""
-        if not self.client:
-            raise ValueError("Client non initialisé")
-        
-        response = await self.client.create_completion(
+[![Security](https://img.shields.io/badge/Security-Enterprise%20Ready-green.svg)](./docs/VALIDATION_MICRO_JALON_4_1_A.md)
             prompt=prompt,
             **kwargs
         )
@@ -934,4 +929,4 @@ L'**Orchestrator Agent** est une plateforme **Production-Ready** qui combine :
 
 [![GitHub](https://img.shields.io/badge/GitHub-A--IR--OB1-blue?logo=github)](https://github.com/sylvainbonnecarrere/A-IR-OB1)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![Security](https://img.shields.io/badge/Security-Enterprise%20Ready-green.svg)](./VALIDATION_MICRO_JALON_4_1_A.md)
+[![Security](https://img.shields.io/badge/Security-Enterprise%20Ready-green.svg)](./docs/VALIDATION_MICRO_JALON_4_1_A.md)
